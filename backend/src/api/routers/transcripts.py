@@ -1,5 +1,5 @@
 from datetime import datetime
-from typing import Optional
+from typing import List, Optional
 
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
@@ -8,6 +8,11 @@ from src.api.models import JobStatus, Transcript, TranscriptSegment
 from src.api.store import ASSETS, TRANSCRIPTS, generate_id
 
 router = APIRouter(tags=["transcripts"])
+
+# In-memory versioning and audit log for transcripts (MVP).
+# Keyed by transcript_id.
+_TRANSCRIPT_VERSIONS: dict[str, List[Transcript]] = {}
+_TRANSCRIPT_AUDIT: dict[str, List[dict]] = {}
 
 
 class TranscriptCreateRequest(BaseModel):
@@ -44,6 +49,15 @@ def create_transcript(payload: TranscriptCreateRequest) -> TranscriptResponse:
         status=JobStatus.completed if payload.text else JobStatus.pending,
     )
     TRANSCRIPTS[transcript_id] = transcript
+    # initialize versions/audit
+    _TRANSCRIPT_VERSIONS[transcript_id] = [transcript.model_copy(deep=True)]
+    _TRANSCRIPT_AUDIT[transcript_id] = [
+        {
+            "timestamp": datetime.utcnow().isoformat() + "Z",
+            "action": "create",
+            "changes": transcript.model_dump(),
+        }
+    ]
     return TranscriptResponse(transcript=transcript)
 
 
@@ -74,16 +88,28 @@ class TranscriptUpdateRequest(BaseModel):
     status: Optional[JobStatus] = Field(None, description="Processing status.")
 
 
-@router.patch("/{transcript_id}", summary="Update transcript", description="Update basic fields of a transcript.")
-def update_transcript(transcript_id: str, payload: TranscriptUpdateRequest) -> Transcript:
+@router.put(
+    "/{transcript_id}",
+    summary="Edit transcript (versioned)",
+    description="Replace or edit transcript fields and store a new version with an audit log entry.",
+)
+def put_transcript(transcript_id: str, payload: TranscriptUpdateRequest) -> Transcript:
     """
     PUBLIC_INTERFACE
-    Update transcript values.
+    Edit transcript values and keep an in-memory version history and audit log.
+
+    Parameters:
+        transcript_id (str): ID of the transcript to update.
+        payload (TranscriptUpdateRequest): Fields to update (partial).
+
+    Returns:
+        Transcript: The updated transcript.
     """
     transcript = TRANSCRIPTS.get(transcript_id)
     if not transcript:
         raise HTTPException(status_code=404, detail="Transcript not found")
 
+    before = transcript.model_dump()
     if payload.language is not None:
         transcript.language = payload.language
     if payload.text is not None:
@@ -92,7 +118,53 @@ def update_transcript(transcript_id: str, payload: TranscriptUpdateRequest) -> T
         transcript.status = payload.status
     transcript.updated_at = datetime.utcnow()
     TRANSCRIPTS[transcript_id] = transcript
+
+    # Versioning
+    _TRANSCRIPT_VERSIONS.setdefault(transcript_id, []).append(transcript.model_copy(deep=True))
+
+    # Audit
+    after = transcript.model_dump()
+    changes = {k: {"before": before.get(k), "after": after.get(k)} for k in after.keys() if before.get(k) != after.get(k)}
+    _TRANSCRIPT_AUDIT.setdefault(transcript_id, []).append(
+        {
+            "timestamp": datetime.utcnow().isoformat() + "Z",
+            "action": "update",
+            "changes": changes,
+        }
+    )
     return transcript
+
+
+@router.get(
+    "/{transcript_id}/versions",
+    summary="Get transcript versions",
+    description="Return the in-memory version history for a transcript.",
+)
+def get_versions(transcript_id: str):
+    """
+    PUBLIC_INTERFACE
+    Return version history for a transcript.
+    """
+    versions = _TRANSCRIPT_VERSIONS.get(transcript_id)
+    if versions is None:
+        raise HTTPException(status_code=404, detail="Transcript not found")
+    return {"count": len(versions), "versions": versions}
+
+
+@router.get(
+    "/{transcript_id}/audit",
+    summary="Get transcript audit log",
+    description="Return the in-memory audit log for a transcript.",
+)
+def get_audit(transcript_id: str):
+    """
+    PUBLIC_INTERFACE
+    Return audit log for a transcript.
+    """
+    audit = _TRANSCRIPT_AUDIT.get(transcript_id)
+    if audit is None:
+        raise HTTPException(status_code=404, detail="Transcript not found")
+    return {"items": audit}
 
 
 class SegmentAppendRequest(BaseModel):
@@ -116,4 +188,14 @@ def append_segment(transcript_id: str, payload: SegmentAppendRequest) -> Transcr
     transcript.segments.append(segment)
     transcript.updated_at = datetime.utcnow()
     TRANSCRIPTS[transcript_id] = transcript
+
+    # Version + audit for segment append
+    _TRANSCRIPT_VERSIONS.setdefault(transcript_id, []).append(transcript.model_copy(deep=True))
+    _TRANSCRIPT_AUDIT.setdefault(transcript_id, []).append(
+        {
+            "timestamp": datetime.utcnow().isoformat() + "Z",
+            "action": "append_segment",
+            "changes": {"segments": "appended"},
+        }
+    )
     return transcript

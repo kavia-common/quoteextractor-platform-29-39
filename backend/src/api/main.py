@@ -15,7 +15,8 @@ app = FastAPI(
         "Backend API for ingesting media, generating transcripts, extracting quotes, "
         "managing review workflows, and exporting platform-specific content.\n\n"
         "Real-time usage notes:\n"
-        "- MVP does not expose WebSocket endpoints; background tasks are simulated."
+        "- MVP does not expose WebSocket endpoints; background tasks are simulated.\n"
+        "- Transcripts support GET by ID and PUT edits with in-memory versioning and audit logs."
     ),
     version="0.1.0",
     contact={"name": "QuoteExtractor Team"},

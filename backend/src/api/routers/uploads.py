@@ -1,5 +1,6 @@
 from datetime import datetime
 from typing import Optional
+import time
 
 from fastapi import APIRouter, BackgroundTasks, File, Form, HTTPException, UploadFile
 from pydantic import BaseModel, Field
@@ -61,20 +62,8 @@ async def upload_asset(
     )
     ASSETS[asset_id] = asset
 
-    # Create an associated transcript record in 'processing' to represent queued work
-    transcript_id = generate_id("transcript")
-    transcript = Transcript(
-        id=transcript_id,
-        asset_id=asset_id,
-        language=None,
-        text=None,
-        segments=[],
-        status=JobStatus.processing,
-    )
-    TRANSCRIPTS[transcript_id] = transcript
-
-    # Simulate async transcription completion via BackgroundTasks
-    background_tasks.add_task(_simulate_transcription_job, transcript_id)
+    # Simulate async transcription creation via BackgroundTasks after delay
+    background_tasks.add_task(_simulate_transcription_job_with_delay, asset_id)
 
     return AssetCreateResponse(
         asset_id=asset_id,
@@ -105,10 +94,17 @@ def get_upload_status(asset_id: str) -> UploadStatusResponse:
     if not asset:
         raise HTTPException(status_code=404, detail="Asset not found")
 
-    # Find transcript for this asset (MVP: 1:1 created at upload time)
+    # Find transcript for this asset (MVP: created shortly after upload)
     transcript = next((t for t in TRANSCRIPTS.values() if t.asset_id == asset_id), None)
     if not transcript:
-        raise HTTPException(status_code=404, detail="Transcript not initialized for this asset")
+        # Not yet created by background task
+        return UploadStatusResponse(
+            asset_id=asset_id,
+            status=JobStatus.pending,
+            transcript_id=None,
+            updated_at=datetime.utcnow(),
+            message="Queued",
+        )
 
     return UploadStatusResponse(
         asset_id=asset_id,
@@ -165,22 +161,32 @@ def _infer_asset_type(content_type: str) -> AssetType:
     return AssetType.unknown
 
 
-def _simulate_transcription_job(transcript_id: str) -> None:
+def _simulate_transcription_job_with_delay(asset_id: str) -> None:
     """
-    Simulate background transcription work. This function marks the transcript as completed
-    and writes a simple placeholder transcript text.
+    Simulate a background task that, after a small delay, creates a Transcript record
+    and marks it completed with a mock text.
+    """
+    # Short delay to simulate processing queue; keep small to avoid impacting CI.
+    time.sleep(0.05)
 
-    In a real system, this would:
-      - Store the file to object storage
-      - Call an ASR/transcription provider
-      - Poll or stream results, then persist transcript and segments
-    """
-    # A tiny synchronous delay simulation can be done by time.sleep, but we avoid blocking here.
-    # Instead, just complete immediately to keep CI quick and deterministic.
-    transcript = TRANSCRIPTS.get(transcript_id)
-    if not transcript:
+    # Create transcript for asset if not exists
+    existing = next((t for t in TRANSCRIPTS.values() if t.asset_id == asset_id), None)
+    if existing:
+        # If already present (from other flow), just ensure it's marked done
+        existing.text = existing.text or f"Simulated transcript for asset {asset_id}."
+        if existing.status in {JobStatus.pending, JobStatus.processing}:
+            existing.status = JobStatus.completed
+        existing.updated_at = datetime.utcnow()
+        TRANSCRIPTS[existing.id] = existing
         return
-    transcript.text = f"Simulated transcript for asset {transcript.asset_id}."
-    transcript.status = JobStatus.completed
-    transcript.updated_at = datetime.utcnow()
+
+    transcript_id = generate_id("transcript")
+    transcript = Transcript(
+        id=transcript_id,
+        asset_id=asset_id,
+        language=None,
+        text=f"Simulated transcript for asset {asset_id}.",
+        segments=[],
+        status=JobStatus.completed,
+    )
     TRANSCRIPTS[transcript_id] = transcript
