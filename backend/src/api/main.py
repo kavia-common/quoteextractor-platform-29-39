@@ -6,6 +6,7 @@ from src.api.routers.transcripts import router as transcripts_router
 from src.api.routers.quotes import router as quotes_router
 from src.api.routers.exports import router as exports_router
 from src.api.routers.status import router as status_router
+from src.api.routers.auth import router as auth_router
 
 # Initialize FastAPI with metadata for OpenAPI
 app = FastAPI(
@@ -27,6 +28,7 @@ app = FastAPI(
         {"name": "exports", "description": "Export jobs to various formats/platforms."},
         {"name": "status", "description": "Service and job status endpoints."},
         {"name": "health", "description": "Health check endpoints."},
+        {"name": "auth", "description": "Authentication endpoints (MVP mock)."},
     ],
 )
 
@@ -57,3 +59,4 @@ app.include_router(transcripts_router, prefix="/api/transcripts")
 app.include_router(quotes_router, prefix="/api/quotes")
 app.include_router(exports_router, prefix="/api/exports")
 app.include_router(status_router, prefix="/api/status")
+app.include_router(auth_router, prefix="/auth")
