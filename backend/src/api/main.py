@@ -1,7 +1,6 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from src.api.routers.auth import router as auth_router
 from src.api.routers.uploads import router as uploads_router
 from src.api.routers.transcripts import router as transcripts_router
 from src.api.routers.quotes import router as quotes_router
@@ -22,7 +21,6 @@ app = FastAPI(
     contact={"name": "QuoteExtractor Team"},
     license_info={"name": "Proprietary"},
     openapi_tags=[
-        {"name": "auth", "description": "Authentication endpoints (MVP: mock/in-memory)."},
         {"name": "uploads", "description": "Upload media files and register assets."},
         {"name": "transcripts", "description": "Create and manage transcripts."},
         {"name": "quotes", "description": "AI-extracted quotes and manual curation."},
@@ -54,7 +52,6 @@ def health_check():
     return {"message": "Healthy"}
 
 # Route registration
-app.include_router(auth_router, prefix="/api/auth")
 app.include_router(uploads_router, prefix="/api/uploads")
 app.include_router(transcripts_router, prefix="/api/transcripts")
 app.include_router(quotes_router, prefix="/api/quotes")
